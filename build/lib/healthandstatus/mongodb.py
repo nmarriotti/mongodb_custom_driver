@@ -3,7 +3,9 @@ from bson.objectid import ObjectId
 import os
 import types
 import datetime
-
+import hashlib
+import sys
+import time
 
 class CustomMongodbDriver(object):
     """ CRUD operations for Animal collection in MongoDB """
@@ -27,10 +29,10 @@ class CustomMongodbDriver(object):
         else:
             if data is not None:
                 try:
-                    self.database[collection].insert(data)  # data should be dictionary
+                    self.database[collection].insert_many(data, ordered=False)  # data should be dictionary
                     return True # success
-                except Exception as e:
-                    print(str(e))
+                except:
+                    pass
             else:
                 raise Exception("Nothing to save, because data parameter is empty")
             # insert failed
@@ -51,19 +53,27 @@ class CustomMongodbDriver(object):
     # update data in collection
     # dict(query) = What is being changed
     # dict(changes) = What the query is being replaced with
-    def update(self, collection=None, query=None, changes=None):
+    def update(self, collection=None, data=None, changes=None):
         ''' Update data in a collection '''
         if collection is None:
             raise Exception("Collection not specified")
         else:
-            if query is not None and changes is not None:
+            if data is not None and changes is not None:
                 try:
-                    cmd = self.database[collection].update_many(query, { "$set": changes })
-                    return cmd.raw_result # json
+                    cmd = self.database[collection].update_many(data, { "$set": changes })
+                    return cmd # json
                 except Exception as e:
                     return(str(e))
             else:
                 raise Exception("Query and/or update arguments are empty")
+
+
+    def createIndex(self, collection=None, index=None):
+        if index is None:
+            raise Exception("Index not specified")
+        if collection is None:
+            raise Exception("Collection not specified")
+        self.database[collection].create_index(index, unique=True)
 
 
     # dict(query) = Key/value pairs describing document(s) to delete
@@ -87,13 +97,19 @@ class CustomMongodbFileProcessor():
     def __init__(self, driver):
         self.__db = driver
         self.__ignore_first_header = False
+        self.__overwrite = True
         self.__batch_size = 1000
         self.__queue = {}
         self.__results = {
-            "documents_added": 0,
+            "files": 0,
             "total_rows": 0,
         }
     
+    def setOverwrite(self, value):
+        if isinstance(value, bool):
+            self.__overwrite = value
+        else:
+            raise Exception("Overwrite value must be True or False")
 
     def setBatchSize(self, value):
         try:
@@ -110,6 +126,9 @@ class CustomMongodbFileProcessor():
 
 
     def processFolder(self, src=None, splitchar="_", sep=",", traits=[]):
+        print("Working, this may take a while...")
+        start_time = time.time()
+
         if not src is None and not splitchar is None:
             try:
                 for subdir, dirs, files in os.walk(src):
@@ -123,20 +142,37 @@ class CustomMongodbFileProcessor():
                                 approved = False
 
                         if approved:
-                            self.__parseAndAdd(filename, splitchar, sep)
-                            self.__results["documents_added"] += 1
+                            basename = os.path.basename(filename)
+                            
+                            alreadyProcessed = self.__fileAlreadyProcessed(basename)
+                            if not alreadyProcessed or self.__overwrite:
+                                print("processing",basename)
+                                self.__parseAndAdd(filename, splitchar, sep)
+                                self.__results["files"] += 1
 
-                return self.__results
+                                if not alreadyProcessed:
+                                    self.__db.create(collection="ingestedFiles", data=[{"filename": basename}])
+                
+                self.__results["seconds_elapsed"] = "%.2f" % (time.time() - start_time)
+                print("Results:",self.__results)
 
             except Exception as e:
                 print(str(e))
 
     
+    def __fileAlreadyProcessed(self, filename):
+        results = self.__db.read(collection="ingestedFiles", data={"filename": filename})
+        if results:
+            return True
+        return False
+
+
     def __parseAndAdd(self, filename, splitchar, sep):
         # Tally number of files added to database
         try:
             # Get info from filename
-            parts = os.path.basename(filename).split(splitchar)
+            basename = os.path.basename(filename)
+            parts = basename.split(splitchar)
             owner = parts[0]
             collection = parts[1]
             system = parts[2]
@@ -144,6 +180,9 @@ class CustomMongodbFileProcessor():
 
             if not collection in self.__queue.keys():
                 self.__queue[collection] = []
+            
+            # Create unique index of hash column
+            self.__db.createIndex(collection=collection, index=[("hash", 'text')])
 
             # Read file
             with open(filename, 'r') as file:
@@ -174,8 +213,11 @@ class CustomMongodbFileProcessor():
                     data["owner"] = owner
                     data["system"] = system
                     data["date"] = filedate
-                    
 
+                    # create string to hash
+                    unhashed_string = "{}_{}".format(line, basename).encode('utf-8')
+                    # hash line+filename
+                    data["hash"] = hashlib.md5(unhashed_string).hexdigest()
 
                     self.__queue[collection].append(data)
 
@@ -199,7 +241,6 @@ class CustomMongodbFileProcessor():
     def __write(self, collection):
         self.__db.create(collection=collection, data=self.__queue[collection])
         self.__results["total_rows"] += len(self.__queue[collection])
-        #print(self.__results["total_rows"])
         self.__queue[collection] = []
 
         
