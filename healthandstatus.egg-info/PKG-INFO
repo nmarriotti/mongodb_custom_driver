@@ -1,0 +1,14 @@
+Metadata-Version: 1.1
+Name: healthandstatus
+Version: 1.0.0
+Summary: Custom MongoDB driver to ingest H&S .dat files
+Home-page: UNKNOWN
+Author: Nicholas Marriotti
+Author-email: nmmarriotti@scires.com
+License: MIT
+Description: UNKNOWN
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 2
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
