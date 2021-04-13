@@ -5,6 +5,7 @@ import types
 import datetime
 import hashlib
 import sys
+import time
 
 class CustomMongodbDriver(object):
     """ CRUD operations for Animal collection in MongoDB """
@@ -30,7 +31,7 @@ class CustomMongodbDriver(object):
                 try:
                     self.database[collection].insert_many(data, ordered=False)  # data should be dictionary
                     return True # success
-                except Exception:
+                except:
                     pass
             else:
                 raise Exception("Nothing to save, because data parameter is empty")
@@ -96,13 +97,19 @@ class CustomMongodbFileProcessor():
     def __init__(self, driver):
         self.__db = driver
         self.__ignore_first_header = False
+        self.__overwrite = True
         self.__batch_size = 1000
         self.__queue = {}
         self.__results = {
-            "documents_added": 0,
+            "files": 0,
             "total_rows": 0,
         }
     
+    def setOverwrite(self, value):
+        if isinstance(value, bool):
+            self.__overwrite = value
+        else:
+            raise Exception("Overwrite value must be True or False")
 
     def setBatchSize(self, value):
         try:
@@ -120,6 +127,8 @@ class CustomMongodbFileProcessor():
 
     def processFolder(self, src=None, splitchar="_", sep=",", traits=[]):
         print("Working, this may take a while...")
+        start_time = time.time()
+
         if not src is None and not splitchar is None:
             try:
                 for subdir, dirs, files in os.walk(src):
@@ -133,15 +142,31 @@ class CustomMongodbFileProcessor():
                                 approved = False
 
                         if approved:
-                            self.__parseAndAdd(filename, splitchar, sep)
-                            self.__results["documents_added"] += 1
+                            basename = os.path.basename(filename)
+                            
+                            alreadyProcessed = self.__fileAlreadyProcessed(basename)
+                            if not alreadyProcessed or self.__overwrite:
+                                print("processing",basename)
+                                self.__parseAndAdd(filename, splitchar, sep)
+                                self.__results["files"] += 1
 
-                return self.__results
+                                if not alreadyProcessed:
+                                    self.__db.create(collection="ingestedFiles", data=[{"filename": basename}])
+                
+                self.__results["seconds_elapsed"] = "%.2f" % (time.time() - start_time)
+                print("Results:",self.__results)
 
             except Exception as e:
                 print(str(e))
 
     
+    def __fileAlreadyProcessed(self, filename):
+        results = self.__db.read(collection="ingestedFiles", data={"filename": filename})
+        if results:
+            return True
+        return False
+
+
     def __parseAndAdd(self, filename, splitchar, sep):
         # Tally number of files added to database
         try:
