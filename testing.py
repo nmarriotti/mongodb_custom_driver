@@ -1,4 +1,4 @@
-from modules.mongodb import CustomMongodbDriver, CustomMongodbFileProcessor
+from healthandstatus.mongodb import CustomMongodbDriver, CustomMongodbFileProcessor
 import time
 
 def main():
@@ -18,7 +18,7 @@ def main():
     #Search for files and add them to the database
     #traits list means only process filenames containing a matched trait (used to ignore .sqlite for now)
     start_time = time.time()
-    results = dbFileProcessor.processFolder(src="/home/nmarriotti/development/mongodb_project/files", splitchar="_", sep=",", traits=[".dat"])
+    results = dbFileProcessor.processFolder(src="/tmp/healthandstatus-mongo-testing/files", splitchar="_", sep=",", traits=[".csv"])
     print(results)
     print("Elapsed time: {0}".format(time.time() - start_time))
 

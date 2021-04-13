@@ -1,4 +1,4 @@
-Metadata-Version: 1.1
+Metadata-Version: 1.2
 Name: healthandstatus
 Version: 1.0.0
 Summary: Custom MongoDB driver to ingest H&S .dat files
@@ -12,3 +12,4 @@ Classifier: Programming Language :: Python :: 2
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
+Requires-Python: >=2.7
