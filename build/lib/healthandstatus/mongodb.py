@@ -126,6 +126,7 @@ class CustomMongodbFileProcessor():
             raise Exception("Value must be True or False")
 
     def __scanDir(self, src, traits):
+        print("Fetching files...")
         filesToProcess = []
         for subdir, dirs, files in os.walk(src):
             for file in files:
@@ -135,30 +136,38 @@ class CustomMongodbFileProcessor():
                     if not trait in filename:
                         approved = False
                 if approved:
-                    filesToProcess.append(filename)
+                    basename = os.path.basename(filename)
+                    alreadyProcessed = self.__fileAlreadyProcessed(basename)
+                    if not alreadyProcessed or self.__overwrite:
+                        filesToProcess.append({"filename": filename, "basename": basename, "alreadyProcessed": alreadyProcessed})
         return filesToProcess
                     
 
 
     def processFolder(self, src=None, splitchar="_", sep=",", traits=[]):
-        start_time = time.time()
-
         # Create list of files to process
 	filesToProcess = self.__scanDir(src, traits)
+        numFiles = len(filesToProcess)
 
+        start_time = time.time()
+        
+        if numFiles > 0:
+            print("Processing {0} files...".format(numFiles))
+        else:
+            print("Nothing to do.")
+            return
 
-        print("Processing {0} files...".format(len(filesToProcess)))
-
-        bar = progressbar.ProgressBar(maxval=len(filesToProcess), \
+        bar = progressbar.ProgressBar(maxval=numFiles, \
                                      widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage()])
         bar.start()
 
-        for i in range(0,len(filesToProcess)):
-            file = filesToProcess[i]
-            basename = os.path.basename(file)
-            alreadyProcessed = self.__fileAlreadyProcessed(basename)
+        for i in range(0,numFiles):
+            filename = filesToProcess[i]["filename"]
+            basename = filesToProcess[i]["basename"]
+            alreadyProcessed = filesToProcess[i]["alreadyProcessed"]
+
             if not alreadyProcessed or self.__overwrite:
-                self.__parseAndAdd(file, splitchar, sep)
+                self.__parseAndAdd(filename, splitchar, sep)
                 self.__results["files"] += 1
 
                 if not alreadyProcessed:
