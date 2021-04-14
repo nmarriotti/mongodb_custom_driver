@@ -6,21 +6,22 @@ import datetime
 import hashlib
 import sys
 import time
+import progressbar
 
 class CustomMongodbDriver(object):
-    """ CRUD operations for Animal collection in MongoDB """
+    """ CRUD operations """
     
     # Constructor
     def __init__(self, host="127.0.0.1", port=27017, username=None, password=None):
         # Initializing the MongoClient. This helps to 
         # access the MongoDB databases and collections. 
-        self.client = MongoClient('{0}:{1}'.format(host, port),
-                                 username=username,
-                                 password=password
-                                 )
+        self.client = MongoClient('{0}:{1}'.format(host, port), username=username, password=password)
+        print("Connected to {0} port {1}".format(host, port))
+
 
     def setDatabase(self, database):
         self.database = self.client[database]
+
 
     def create(self, collection=None, data=None):
         ''' Insert document(s) into a collection '''
@@ -29,9 +30,9 @@ class CustomMongodbDriver(object):
         else:
             if data is not None:
                 try:
-                    self.database[collection].insert_many(data, ordered=False)  # data should be dictionary
+                    self.database[collection].insert_many(data, ordered=False, bypass_document_validation=True)  # data should be dictionary
                     return True # success
-                except:
+                except Exception as e:
                     pass
             else:
                 raise Exception("Nothing to save, because data parameter is empty")
@@ -124,40 +125,54 @@ class CustomMongodbFileProcessor():
         else:
             raise Exception("Value must be True or False")
 
+    def __scanDir(self, src, traits):
+        filesToProcess = []
+        for subdir, dirs, files in os.walk(src):
+            for file in files:
+                filename = os.path.join(subdir, file)
+                approved = True
+                for trait in traits:
+                    if not trait in filename:
+                        approved = False
+                if approved:
+                    filesToProcess.append(filename)
+        return filesToProcess
+                    
+
 
     def processFolder(self, src=None, splitchar="_", sep=",", traits=[]):
-        print("Working, this may take a while...")
         start_time = time.time()
 
-        if not src is None and not splitchar is None:
-            try:
-                for subdir, dirs, files in os.walk(src):
-                    for file in files:
-                        filename = os.path.join(subdir, file)
+        # Create list of files to process
+	filesToProcess = self.__scanDir(src, traits)
 
-                        approved = True
 
-                        for trait in traits:
-                            if not trait in filename:
-                                approved = False
+        print("Processing {0} files...".format(len(filesToProcess)))
 
-                        if approved:
-                            basename = os.path.basename(filename)
-                            
-                            alreadyProcessed = self.__fileAlreadyProcessed(basename)
-                            if not alreadyProcessed or self.__overwrite:
-                                print("processing",basename)
-                                self.__parseAndAdd(filename, splitchar, sep)
-                                self.__results["files"] += 1
+        bar = progressbar.ProgressBar(maxval=len(filesToProcess), \
+                                     widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage()])
+        bar.start()
 
-                                if not alreadyProcessed:
-                                    self.__db.create(collection="ingestedFiles", data=[{"filename": basename}])
-                
-                self.__results["seconds_elapsed"] = "%.2f" % (time.time() - start_time)
-                print("Results:",self.__results)
+        for i in range(0,len(filesToProcess)):
+            file = filesToProcess[i]
+            basename = os.path.basename(file)
+            alreadyProcessed = self.__fileAlreadyProcessed(basename)
+            if not alreadyProcessed or self.__overwrite:
+                self.__parseAndAdd(file, splitchar, sep)
+                self.__results["files"] += 1
 
-            except Exception as e:
-                print(str(e))
+                if not alreadyProcessed:
+                    self.__db.create(collection="ingestedFiles", data=[{"filename": basename}])
+            bar.update(i+1)
+
+        bar.finish()        
+        self.__results["seconds_elapsed"] = "%.2f" % (time.time() - start_time)
+        
+        print("\nTotal files:        {0}".format(self.__results["files"]))
+        print("Total rows of data: {0}".format(self.__results["total_rows"]))
+        print("Time elapsed:       {0}".format(self.__results["seconds_elapsed"]))
+
+        print("\nFinished.")
 
     
     def __fileAlreadyProcessed(self, filename):
