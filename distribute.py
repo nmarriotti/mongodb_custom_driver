@@ -5,9 +5,9 @@ import sys
 
 
 def main():
-    srcfile = "/home/nmarriotti/development/mongodb_project/files/5milrecords.csv"
+    srcfile = "/home/nmarriotti/dev/mongodb_custom_driver/5mrecords.csv"
     file_template = 'ID_ABC-123_Hyperic_system1_DTG.dat'
-    destfolder = os.path.join(os.getcwd(), 'files')
+    destfolder = '/tmp/files'
     items_per_file = 500
     counter = 1
     i = 0
