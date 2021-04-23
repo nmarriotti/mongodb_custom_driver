@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='healthandstatus',
-    version='2.1.0',    
+    version='2.1.1',    
     description='Custom MongoDB driver to ingest H&S .dat files',
     url='',
     author='Nicholas Marriotti',

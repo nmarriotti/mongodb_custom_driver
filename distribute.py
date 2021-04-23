@@ -1,11 +1,11 @@
 import datetime
 import os
 import sys
-
+import progressbar
 
 
 def main():
-    srcfile = "/home/nmarriotti/dev/mongodb_custom_driver/5mrecords.csv"
+    srcfile = "/tmp/5milrecords.csv"
     file_template = 'ID_ABC-123_Hyperic_system1_DTG.dat'
     destfolder = '/tmp/files'
     items_per_file = 500

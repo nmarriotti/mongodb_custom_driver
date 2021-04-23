@@ -16,9 +16,6 @@ def main():
     # Data will not be written until the batch size or end of file is reached
     dbFileProcessor.setBatchSize(1000000)
     
-    # Overwriting will attempt to reingest previously ingested files
-    dbFileProcessor.setOverwrite(False)
-    
     #Search for files and add them to the database
     #traits list means only process filenames containing a matched trait (used to ignore .sqlite for now)
     dbFileProcessor.processFolder(src="/tmp/files", splitchar="_", sep=",", traits=[".dat"])

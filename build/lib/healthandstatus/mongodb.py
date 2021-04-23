@@ -33,6 +33,7 @@ class CustomMongodbDriver(object):
                     self.database[collection].insert_many(data, ordered=False, bypass_document_validation=True)  # data should be dictionary
                     return True # success
                 except Exception as e:
+                    #print(str(e))
                     pass
             else:
                 raise Exception("Nothing to save, because data parameter is empty")
@@ -98,7 +99,7 @@ class CustomMongodbFileProcessor():
     def __init__(self, driver):
         self.__db = driver
         self.__ignore_first_header = False
-        self.__overwrite = True
+        self.__overwrite = False
         self.__batch_size = 1000
         self.__queue = {}
         self.__results = {
@@ -126,52 +127,65 @@ class CustomMongodbFileProcessor():
             raise Exception("Value must be True or False")
 
     def __scanDir(self, src, traits):
-        print("Fetching files...")
+        
+        # Get list of ingested files
+        ingestedFiles = [ x["filename"] for x in self.__db.read(collection="ingestedFiles") ]
+
+        # Store files we need to process
         filesToProcess = []
+
         for subdir, dirs, files in os.walk(src):
+
             for file in files:
+
                 filename = os.path.join(subdir, file)
                 approved = True
+
                 for trait in traits:
                     if not trait in filename:
                         approved = False
+
                 if approved:
-                    basename = os.path.basename(filename)
-                    alreadyProcessed = self.__fileAlreadyProcessed(basename)
-                    if not alreadyProcessed or self.__overwrite:
-                        filesToProcess.append({"filename": filename, "basename": basename, "alreadyProcessed": alreadyProcessed})
+
+                    try:
+                        filesToProcess.append(filename)
+                    except Exception as e:
+                        print(str(e))
+        
+        if not self.__overwrite:
+            try:
+                filesToProcess = list(set(filesToProcess) - set(ingestedFiles))
+            except Exception as e:
+                print(str(e))
+                pass
+
         return filesToProcess
                     
 
 
     def processFolder(self, src=None, splitchar="_", sep=",", traits=[]):
+
         # Create list of files to process
-	filesToProcess = self.__scanDir(src, traits)
+        filesToProcess = self.__scanDir(src, traits)
         numFiles = len(filesToProcess)
 
         start_time = time.time()
         
-        if numFiles > 0:
-            print("Processing {0} files...".format(numFiles))
-        else:
+        if numFiles <= 0:
             print("Nothing to do.")
             return
 
         bar = progressbar.ProgressBar(maxval=numFiles, \
-                                     widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage()])
+                                     widgets=[progressbar.SimpleProgress(), ' ', progressbar.Percentage(), ' ', progressbar.ETA()])
         bar.start()
 
         for i in range(0,numFiles):
-            filename = filesToProcess[i]["filename"]
-            basename = filesToProcess[i]["basename"]
-            alreadyProcessed = filesToProcess[i]["alreadyProcessed"]
+            filename = filesToProcess[i]
 
-            if not alreadyProcessed or self.__overwrite:
-                self.__parseAndAdd(filename, splitchar, sep)
-                self.__results["files"] += 1
+            self.__parseAndAdd(filename, splitchar, sep)
+            self.__results["files"] += 1
+            self.__db.create(collection="ingestedFiles", data=[{"filename": filename}])
 
-                if not alreadyProcessed:
-                    self.__db.create(collection="ingestedFiles", data=[{"filename": basename}])
             bar.update(i+1)
 
         bar.finish()        
