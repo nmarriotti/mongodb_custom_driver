@@ -1,4 +1,4 @@
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 from bson.objectid import ObjectId
 import os
 import types
@@ -7,6 +7,8 @@ import hashlib
 import sys
 import time
 import progressbar
+import queue
+import threading
 
 class CustomMongodbDriver(object):
     """ CRUD operations """
@@ -16,7 +18,6 @@ class CustomMongodbDriver(object):
         # Initializing the MongoClient. This helps to 
         # access the MongoDB databases and collections. 
         self.client = MongoClient('{0}:{1}'.format(host, port), username=username, password=password)
-        print("Connected to {0} port {1}".format(host, port))
 
 
     def setDatabase(self, database):
@@ -30,9 +31,14 @@ class CustomMongodbDriver(object):
         else:
             if data is not None:
                 try:
-                    self.database[collection].insert_many(data, ordered=False, bypass_document_validation=True)  # data should be dictionary
+                    self.database[collection].insert_many(data, ordered=False, bypass_document_validation=True) # data should be dictionary
                     return True # success
-                except Exception as e:
+                except errors.DuplicateKeyError:
+                    pass
+                except errors.ConnectionFailure:
+                    print("Connection lost")
+                    sys.exit(1)
+                except:
                     #print(str(e))
                     pass
             else:
@@ -100,12 +106,19 @@ class CustomMongodbFileProcessor():
         self.__db = driver
         self.__ignore_first_header = False
         self.__overwrite = False
-        self.__batch_size = 1000
+        
+        self.dbWriterQueue = queue.Queue()
+        
         self.__queue = {}
         self.__results = {
             "files": 0,
             "total_rows": 0,
         }
+
+        self.src = ""
+        self.splitchar = ""
+        self.sep = ""
+        self.traits = []
     
     def setOverwrite(self, value):
         if isinstance(value, bool):
@@ -113,11 +126,17 @@ class CustomMongodbFileProcessor():
         else:
             raise Exception("Overwrite value must be True or False")
 
-    def setBatchSize(self, value):
-        try:
-            self.__batch_size = int(value)
-        except Exception as e:
-            print(str(e))
+
+    def bulkWriterThread(self, db, name):
+        while True:
+            try:        
+                item = self.dbWriterQueue.get(block=True)
+                #print("bulkWriterThread #{0}: {1}".format(name, item["filename"]))
+                self.__db.create(collection=item["collection"], data=item["data"])
+                self.__db.create(collection="ingestedFiles", data=[{"filename": item["filename"]}])
+                self.dbWriterQueue.task_done()
+            except:
+                pass
 
 
     def setIgnoreFirstHeader(self, value):
@@ -127,7 +146,8 @@ class CustomMongodbFileProcessor():
             raise Exception("Value must be True or False")
 
     def __scanDir(self, src, traits):
-        
+        q = queue.Queue()
+
         # Get list of ingested files
         ingestedFiles = [ x["filename"] for x in self.__db.read(collection="ingestedFiles") ]
 
@@ -159,53 +179,88 @@ class CustomMongodbFileProcessor():
                 print(str(e))
                 pass
 
-        return filesToProcess
+        for item in filesToProcess:
+            q.put(item)
+
+        return q
                     
 
+    def start(self, src=None, splitchar="_", sep=",", traits=[]):
+        self.src = src
+        self.splitchar = splitchar
+        self.sep = sep
+        self.traits = traits
 
-    def processFolder(self, src=None, splitchar="_", sep=",", traits=[]):
+        self.fileQueue = self.__scanDir(self.src, self.traits)
 
-        # Create list of files to process
-        filesToProcess = self.__scanDir(src, traits)
-        numFiles = len(filesToProcess)
+        self.fileThreads = []
+        self.dbThreads = []
 
-        start_time = time.time()
-        
-        if numFiles <= 0:
+        self.fileProgressBar = None
+        self.dbWriterProgressBar = None
+
+        if self.fileQueue.qsize() <= 0:
             print("Nothing to do.")
-            return
+            sys.exit(0)
 
-        bar = progressbar.ProgressBar(maxval=numFiles, \
-                                     widgets=[progressbar.SimpleProgress(), ' ', progressbar.Percentage(), ' ', progressbar.ETA()])
-        bar.start()
 
-        for i in range(0,numFiles):
-            filename = filesToProcess[i]
+        # Create progress bar objects
+        self.fileProgressBar = progressbar.ProgressBar(maxval=self.fileQueue.qsize(), \
+                                    widgets=["Parsing files: ", progressbar.SimpleProgress(), ' ', progressbar.Percentage(), ' ', progressbar.ETA()])
 
-            self.__parseAndAdd(filename, splitchar, sep)
-            self.__results["files"] += 1
-            self.__db.create(collection="ingestedFiles", data=[{"filename": filename}])
+        # Spawn 3 threads to process files
+        for i in range(3):
+            t = threading.Thread(target=self.processFolder, args=(i,), daemon=True)
+            self.fileThreads.append(t)
+            t.start()
 
-            bar.update(i+1)
+        # Start 3 bulk writer threads
+        for i in range(3):
+            t = threading.Thread(target=self.bulkWriterThread, args=(self.__db, i,), daemon=True)
+            self.dbThreads.append(t)
+            t.start()
 
-        bar.finish()        
-        self.__results["seconds_elapsed"] = "%.2f" % (time.time() - start_time)
+        if not self.fileQueue.empty():
+            self.fileProgressBar.start()
+            while not self.fileQueue.empty():
+                self.fileProgressBar.update(self.fileProgressBar.maxval-self.fileQueue.qsize())
+                time.sleep(1)
+            self.fileProgressBar.finish()
+
+
+
+            if not self.dbWriterQueue.empty():
+                currentVal = self.dbWriterQueue.qsize()
+                self.dbWriterProgressBar = progressbar.ProgressBar(maxval=currentVal, \
+                                    widgets=["Writing to database: ", progressbar.SimpleProgress(), ' ', progressbar.Percentage(), ' ', progressbar.ETA()])       
+                self.dbWriterProgressBar.start()
+                while not self.dbWriterQueue.empty():
+                    self.dbWriterProgressBar.update(currentVal-self.dbWriterQueue.qsize())
+                    time.sleep(1)
+                self.dbWriterProgressBar.finish()
+
         
         print("\nTotal files:        {0}".format(self.__results["files"]))
         print("Total rows of data: {0}".format(self.__results["total_rows"]))
-        print("Time elapsed:       {0}".format(self.__results["seconds_elapsed"]))
 
-        print("\nFinished.")
+        print("\nFinished.")      
 
-    
-    def __fileAlreadyProcessed(self, filename):
-        results = self.__db.read(collection="ingestedFiles", data={"filename": filename})
-        if results:
-            return True
-        return False
+
+    def processFolder(self, name):
+        while True:
+            try:
+                filename = self.fileQueue.get(block=True)
+                #print("fileProcessThread #{0}: {1}".format(name, filename))
+                self.__parseAndAdd(filename, self.splitchar, self.sep)
+                self.fileQueue.task_done()
+            except Exception as e:
+                print(str(e))
+                pass
 
 
     def __parseAndAdd(self, filename, splitchar, sep):
+        queue = {}
+
         # Tally number of files added to database
         try:
             # Get info from filename
@@ -215,16 +270,18 @@ class CustomMongodbFileProcessor():
             collection = parts[1]
             system = parts[2]
             filedate = self.__parseDate(os.path.splitext(parts[3])[0])
-
-            if not collection in self.__queue.keys():
-                self.__queue[collection] = []
             
             # Create unique index of hash column
             self.__db.createIndex(collection=collection, index=[("hash", 'text')])
 
+            queue["collection"] = collection
+            queue["filename"] = filename
+            queue["data"] = []
+
             # Read file
             with open(filename, 'r') as file:
                 headers = False
+                
                 for line in file:
                     
                     line = line.strip("\n")
@@ -256,36 +313,18 @@ class CustomMongodbFileProcessor():
                     unhashed_string = "{}_{}".format(line, basename).encode('utf-8')
                     # hash line+filename
                     data["hash"] = hashlib.md5(unhashed_string).hexdigest()
-
-                    self.__queue[collection].append(data)
-
-                    collection_to_write = self.__readyToWrite()
-                    if collection_to_write:
-                        self.__write(collection_to_write)
+                    
+                    queue["data"].append(data)
+                    self.__results["total_rows"] += 1
             
-            self.__writeAll()
+            self.dbWriterQueue.put(queue) 
+            self.__results["files"] += 1   
 
+            return True
         except Exception as e:
             print(str(e))
-    
 
-    def __readyToWrite(self):
-        for k in self.__queue.keys():
-            if len(self.__queue[k]) == self.__batch_size:
-                return k
         return False
-        
-
-    def __write(self, collection):
-        self.__db.create(collection=collection, data=self.__queue[collection])
-        self.__results["total_rows"] += len(self.__queue[collection])
-        self.__queue[collection] = []
-
-        
-    def __writeAll(self):
-        keys = list(self.__queue.keys())
-        for k in keys:
-            self.__write(k)
     
 
     def __parseDate(self, date_str):

@@ -13,12 +13,9 @@ def main():
     # Handles #Tablename found in H&S headers
     dbFileProcessor.setIgnoreFirstHeader(True)
     
-    # Data will not be written until the batch size or end of file is reached
-    dbFileProcessor.setBatchSize(1000000)
-    
     #Search for files and add them to the database
     #traits list means only process filenames containing a matched trait (used to ignore .sqlite for now)
-    dbFileProcessor.processFolder(src="/tmp/files", splitchar="_", sep=",", traits=[".dat"])
+    dbFileProcessor.start(src="/tmp/files", splitchar="_", sep=",", traits=[".dat"])
     
 
 if __name__ == "__main__":
